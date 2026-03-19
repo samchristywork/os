@@ -31,9 +31,16 @@ static void serial_print(const char *str) {
     serial_putchar(str[i]);
 }
 
+static char serial_getchar(void) {
+  while ((inb(PORT + 5) & 0x01) == 0)
+    ;
+  return inb(PORT);
+}
+
 void kernel_main(void) {
   serial_init();
   serial_print("Hello, World!\n");
-  while (1)
-    ;
+  while (1) {
+    serial_putchar(serial_getchar());
+  }
 }
