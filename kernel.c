@@ -81,8 +81,11 @@ void kernel_main(void) {
     read_line(buf, 256);
 
     if (streq(buf, "help")) {
-      serial_print("Commands:\r\n  help        show this message\r\n  echo "
-                   "<msg>  print a message\r\n");
+      serial_print(
+          "Commands:\r\n  help        show this message\r\n  echo "
+          "<msg>  print a message\r\n  clear       clear the screen\r\n");
+    } else if (streq(buf, "clear")) {
+      serial_print("\033[2J\033[H");
     } else if (startswith(buf, "echo")) {
       const char *msg = buf[4] == ' ' ? buf + 5 : "";
       serial_print(msg);
