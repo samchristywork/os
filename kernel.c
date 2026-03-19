@@ -37,10 +37,60 @@ static char serial_getchar(void) {
   return inb(PORT);
 }
 
+static int streq(const char *a, const char *b) {
+  while (*a && *a == *b) {
+    a++;
+    b++;
+  }
+  return *a == *b;
+}
+
+static int startswith(const char *str, const char *prefix) {
+  while (*prefix)
+    if (*str++ != *prefix++)
+      return 0;
+  return 1;
+}
+
+static void read_line(char *buf, int max) {
+  int i = 0;
+  while (i < max - 1) {
+    char c = serial_getchar();
+    if (c == '\r' || c == '\n') {
+      serial_print("\r\n");
+      break;
+    }
+    if ((c == '\b' || c == 127) && i > 0) {
+      i--;
+      serial_print("\b \b");
+      continue;
+    }
+    serial_putchar(c);
+    buf[i++] = c;
+  }
+  buf[i] = '\0';
+}
+
 void kernel_main(void) {
   serial_init();
-  serial_print("Hello, World!\n");
+  serial_print("Type 'help' for a list of commands.\r\n");
+
+  char buf[256];
   while (1) {
-    serial_putchar(serial_getchar());
+    serial_print("> ");
+    read_line(buf, 256);
+
+    if (streq(buf, "help")) {
+      serial_print("Commands:\r\n  help        show this message\r\n  echo "
+                   "<msg>  print a message\r\n");
+    } else if (startswith(buf, "echo")) {
+      const char *msg = buf[4] == ' ' ? buf + 5 : "";
+      serial_print(msg);
+      serial_print("\r\n");
+    } else if (buf[0] != '\0') {
+      serial_print("Unknown command: ");
+      serial_print(buf);
+      serial_print("\r\n");
+    }
   }
 }
