@@ -17,8 +17,13 @@ build/kernel.o: kernel.c | build
 build/os.bin: $(OBJECTS)
 	ld $(LDFLAGS) -o $@ $(OBJECTS)
 
-run: build/os.bin
-	qemu-system-i386 -kernel build/os.bin -nographic
+build/fs.img: | build
+	dd if=/dev/zero of=build/fs.img bs=512 count=2048 2>/dev/null
+
+run: build/os.bin build/fs.img
+	qemu-system-i386 -kernel build/os.bin \
+	    -drive file=build/fs.img,format=raw,if=ide \
+	    -nographic
 
 clean:
 	rm -rf build
