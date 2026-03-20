@@ -10,6 +10,16 @@ static inline unsigned char inb(unsigned short port) {
   return ret;
 }
 
+static inline void outw(unsigned short port, unsigned short val) {
+  __asm__ volatile("outw %0, %1" : : "a"(val), "Nd"(port));
+}
+
+static inline unsigned short inw(unsigned short port) {
+  unsigned short ret;
+  __asm__ volatile("inw %1, %0" : "=a"(ret) : "Nd"(port));
+  return ret;
+}
+
 static void serial_init(void) {
   outb(PORT + 1, 0x00); // disable interrupts
   outb(PORT + 3, 0x80); // enable DLAB
@@ -83,9 +93,76 @@ static void read_line(char *buf, int max) {
   buf[i] = '\0';
 }
 
+#define ATA_DATA 0x1F0
+#define ATA_SECT 0x1F2
+#define ATA_LBA_LO 0x1F3
+#define ATA_LBA_MI 0x1F4
+#define ATA_LBA_HI 0x1F5
+#define ATA_DRIVE 0x1F6
+#define ATA_CMD 0x1F7
+#define ATA_STATUS 0x1F7
+
+static int ata_wait(void) {
+  for (int i = 0; i < 100000; i++) {
+    unsigned char s = inb(ATA_STATUS);
+    if (s == 0xFF)
+      return -1; // no drive
+    if (!(s & 0x80))
+      return 0; // BSY cleared
+  }
+  return -1; // timeout
+}
+
+static int ata_wait_drq(void) {
+  for (int i = 0; i < 100000; i++) {
+    unsigned char s = inb(ATA_STATUS);
+    if (s & 0x01)
+      return -1; // ERR
+    if (!(s & 0x80) && (s & 0x08))
+      return 0; // BSY=0, DRQ=1
+  }
+  return -1; // timeout
+}
+
+static int ata_read_sector(unsigned int lba, unsigned short *buf) {
+  if (ata_wait() < 0)
+    return -1;
+  outb(ATA_DRIVE, 0xE0 | ((lba >> 24) & 0x0F));
+  outb(ATA_SECT, 1);
+  outb(ATA_LBA_LO, lba & 0xFF);
+  outb(ATA_LBA_MI, (lba >> 8) & 0xFF);
+  outb(ATA_LBA_HI, (lba >> 16) & 0xFF);
+  outb(ATA_CMD, 0x20); // READ SECTORS
+  if (ata_wait_drq() < 0)
+    return -1;
+  for (int i = 0; i < 256; i++)
+    buf[i] = inw(ATA_DATA);
+  return 0;
+}
+
+static int ata_write_sector(unsigned int lba, unsigned short *buf) {
+  if (ata_wait() < 0)
+    return -1;
+  outb(ATA_DRIVE, 0xE0 | ((lba >> 24) & 0x0F));
+  outb(ATA_SECT, 1);
+  outb(ATA_LBA_LO, lba & 0xFF);
+  outb(ATA_LBA_MI, (lba >> 8) & 0xFF);
+  outb(ATA_LBA_HI, (lba >> 16) & 0xFF);
+  outb(ATA_CMD, 0x30); // WRITE SECTORS
+  if (ata_wait_drq() < 0)
+    return -1;
+  for (int i = 0; i < 256; i++)
+    outw(ATA_DATA, buf[i]);
+  outb(ATA_CMD, 0xE7); // FLUSH CACHE
+  ata_wait();
+  return 0;
+}
+
+/* file_t is exactly 512 bytes: 32 + 472 + 4 + 4 = 512, one sector per file. */
 #define FS_MAX_FILES 16
 #define FS_MAX_NAME 32
-#define FS_MAX_DATA 512
+#define FS_MAX_DATA 472
+#define FS_MAGIC 0x4F534653 /* "OSFS" */
 
 typedef struct {
   char name[FS_MAX_NAME];
@@ -110,6 +187,32 @@ static file_t *fs_alloc(void) {
   return 0;
 }
 
+/* LBA 0: magic sector. LBA 1-16: one file_t per sector. */
+
+static void fs_load(void) {
+  static unsigned short magic_buf[256];
+  if (ata_read_sector(0, magic_buf) < 0)
+    return;
+  unsigned int magic =
+      (unsigned int)magic_buf[0] | ((unsigned int)magic_buf[1] << 16);
+  if (magic != FS_MAGIC)
+    return;
+  for (int i = 0; i < FS_MAX_FILES; i++)
+    if (ata_read_sector(1 + i, (unsigned short *)&fs[i]) < 0)
+      return;
+}
+
+static void fs_flush(void) {
+  static unsigned short magic_buf[256];
+  magic_buf[0] = FS_MAGIC & 0xFFFF;
+  magic_buf[1] = FS_MAGIC >> 16;
+  if (ata_write_sector(0, magic_buf) < 0)
+    return;
+  for (int i = 0; i < FS_MAX_FILES; i++)
+    if (ata_write_sector(1 + i, (unsigned short *)&fs[i]) < 0)
+      return;
+}
+
 static int fs_write(const char *name, const char *data) {
   file_t *f = fs_find(name);
   if (!f) {
@@ -126,17 +229,23 @@ static int fs_write(const char *name, const char *data) {
     f->data[i] = data[i];
   f->data[len] = '\0';
   f->size = len;
+  fs_flush();
   return 1;
 }
 
 static void fs_delete(const char *name) {
   file_t *f = fs_find(name);
-  if (f)
+  if (f) {
     f->used = 0;
+    fs_flush();
+  }
 }
 
 void kernel_main(void) {
+  outb(0x70, inb(0x70) | 0x80); // disable NMI via CMOS
+  outb(0x61, inb(0x61) | 0x0C); // disable IOCHK# and SERR# NMI sources
   serial_init();
+  fs_load();
   serial_print("Type 'help' for a list of commands.\r\n");
 
   char buf[256];
