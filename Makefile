@@ -25,5 +25,10 @@ run: build/os.bin build/fs.img
 	    -drive file=build/fs.img,format=raw,if=ide \
 	    -nographic
 
+run-gui: build/os.bin build/fs.img
+	qemu-system-i386 -kernel build/os.bin \
+	    -drive file=build/fs.img,format=raw,if=ide \
+	    -serial stdio
+
 clean:
 	rm -rf build
