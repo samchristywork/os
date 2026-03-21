@@ -241,6 +241,32 @@ static void fs_delete(const char *name) {
   }
 }
 
+#define VGA_BUF ((unsigned short *)0xB8000)
+#define VGA_W 80
+#define VGA_H 25
+
+static void vga_set(int x, int y, char c, unsigned char attr) {
+  VGA_BUF[y * VGA_W + x] = (unsigned short)(unsigned char)c | ((unsigned short)attr << 8);
+}
+
+static void vga_draw(void) {
+  static const unsigned char colors[] = { 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14 };
+  int ncolors = 12;
+
+  for (int y = 0; y < VGA_H; y++) {
+    unsigned char bg = colors[y % ncolors];
+    for (int x = 0; x < VGA_W; x++)
+      vga_set(x, y, ' ', (unsigned char)(bg << 4));
+  }
+
+  const char *msg = "Hello from VGA!";
+  int len = strlen(msg);
+  int cx = (VGA_W - len) / 2;
+  int cy = VGA_H / 2;
+  for (int i = 0; i < len; i++)
+    vga_set(cx + i, cy, msg[i], 0x0F);
+}
+
 void kernel_main(void) {
   outb(0x70, inb(0x70) | 0x80); // disable NMI via CMOS
   outb(0x61, inb(0x61) | 0x0C); // disable IOCHK# and SERR# NMI sources
