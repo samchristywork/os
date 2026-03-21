@@ -359,6 +359,7 @@ void kernel_main(multiboot_info_t *mbi) {
     if (streq(buf, "help")) {
       serial_print("Commands:\r\n"
                    "  help               show this message\r\n"
+                   "  exit               shut down the VM\r\n"
                    "  echo <msg>         print a message\r\n"
                    "  clear              clear the screen\r\n"
                    "  draw               draw to the framebuffer\r\n"
@@ -422,6 +423,9 @@ void kernel_main(multiboot_info_t *mbi) {
         serial_print(name);
         serial_print("\r\n");
       }
+    } else if (streq(buf, "exit")) {
+      outw(0x604, 0x2000); /* ACPI S5 shutdown */
+      __asm__ volatile("hlt");
     } else if (buf[0] != '\0') {
       serial_print("Unknown command: ");
       serial_print(buf);
