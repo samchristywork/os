@@ -1,4 +1,4 @@
-CFLAGS=-m32 -ffreestanding -fno-stack-protector -nostdlib -O2
+CFLAGS=-m32 -ffreestanding -fno-stack-protector -nostdlib -O2 -mno-sse -mno-sse2 -mno-mmx
 ASFLAGS=-f elf32
 LDFLAGS=-m elf_i386 -T src/linker.ld
 OBJECTS=build/boot.o build/kernel.o
@@ -23,12 +23,12 @@ build/fs.img: | build
 run: build/os.bin build/fs.img
 	qemu-system-i386 -kernel build/os.bin \
 	    -drive file=build/fs.img,format=raw,if=ide \
-	    -nographic
+	    -nographic -no-reboot
 
 run-gui: build/os.bin build/fs.img
 	qemu-system-i386 -kernel build/os.bin \
 	    -drive file=build/fs.img,format=raw,if=ide \
-	    -serial stdio
+	    -serial stdio -no-reboot
 
 clean:
 	rm -rf build
