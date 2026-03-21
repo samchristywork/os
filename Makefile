@@ -28,7 +28,7 @@ run: build/os.bin build/fs.img
 run-gui: build/os.bin build/fs.img
 	qemu-system-i386 -kernel build/os.bin \
 	    -drive file=build/fs.img,format=raw,if=ide \
-	    -serial stdio -no-reboot
+	    -serial stdio -no-reboot -vga std
 
 clean:
 	rm -rf build

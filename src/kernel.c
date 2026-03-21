@@ -20,6 +20,16 @@ static inline unsigned short inw(unsigned short port) {
   return ret;
 }
 
+static inline void outl(unsigned short port, unsigned int val) {
+  __asm__ volatile("outl %0, %1" : : "a"(val), "Nd"(port));
+}
+
+static inline unsigned int inl(unsigned short port) {
+  unsigned int ret;
+  __asm__ volatile("inl %1, %0" : "=a"(ret) : "Nd"(port));
+  return ret;
+}
+
 static void serial_init(void) {
   outb(PORT + 1, 0x00); // disable interrupts
   outb(PORT + 3, 0x80); // enable DLAB
@@ -241,36 +251,103 @@ static void fs_delete(const char *name) {
   }
 }
 
-#define VGA_BUF ((unsigned short *)0xB8000)
-#define VGA_W 80
-#define VGA_H 25
+typedef struct {
+  unsigned int flags;
+  unsigned int mem_lower, mem_upper;
+  unsigned int boot_device;
+  unsigned int cmdline;
+  unsigned int mods_count, mods_addr;
+  unsigned int syms[4];
+  unsigned int mmap_length, mmap_addr;
+  unsigned int drives_length, drives_addr;
+  unsigned int config_table;
+  unsigned int boot_loader_name;
+  unsigned int apm_table;
+  unsigned int vbe_control_info, vbe_mode_info;
+  unsigned short vbe_mode, vbe_interface_seg, vbe_interface_off, vbe_interface_len;
+  unsigned int framebuffer_addr_lo, framebuffer_addr_hi;
+  unsigned int framebuffer_pitch;
+  unsigned int framebuffer_width, framebuffer_height;
+  unsigned char framebuffer_bpp, framebuffer_type;
+} __attribute__((packed)) multiboot_info_t;
 
-static void vga_set(int x, int y, char c, unsigned char attr) {
-  VGA_BUF[y * VGA_W + x] = (unsigned short)(unsigned char)c | ((unsigned short)attr << 8);
+/* --- Framebuffer --- */
+
+static unsigned char *fb;
+static unsigned int fb_pitch;
+static unsigned int fb_width;
+static unsigned int fb_height;
+static unsigned char fb_bpp;
+
+/* PCI */
+#define PCI_ADDR 0xCF8
+#define PCI_DATA 0xCFC
+
+static unsigned int pci_read(unsigned char bus, unsigned char dev, unsigned char reg) {
+  outl(PCI_ADDR, 0x80000000u | ((unsigned int)bus << 16) | ((unsigned int)dev << 11) | (reg & 0xFC));
+  return inl(PCI_DATA);
 }
 
-static void vga_draw(void) {
-  static const unsigned char colors[] = { 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14 };
-  int ncolors = 12;
-
-  for (int y = 0; y < VGA_H; y++) {
-    unsigned char bg = colors[y % ncolors];
-    for (int x = 0; x < VGA_W; x++)
-      vga_set(x, y, ' ', (unsigned char)(bg << 4));
+static unsigned int pci_find_vga_bar0(void) {
+  for (unsigned int bus = 0; bus < 8; bus++) {
+    for (unsigned int dev = 0; dev < 32; dev++) {
+      if (pci_read(bus, dev, 0) == 0xFFFFFFFF) continue;
+      if ((pci_read(bus, dev, 8) >> 16) == 0x0300) /* VGA class */
+        return pci_read(bus, dev, 0x10) & 0xFFFFFFF0;
+    }
   }
-
-  const char *msg = "Hello from VGA!";
-  int len = strlen(msg);
-  int cx = (VGA_W - len) / 2;
-  int cy = VGA_H / 2;
-  for (int i = 0; i < len; i++)
-    vga_set(cx + i, cy, msg[i], 0x0F);
+  return 0;
 }
 
-void kernel_main(void) {
+/* Bochs Graphics Adapter (BGA) — supported by QEMU's std VGA */
+#define BGA_INDEX 0x01CE
+#define BGA_DATA  0x01CF
+
+static void bga_write(unsigned short idx, unsigned short val) {
+  outw(BGA_INDEX, idx);
+  outw(BGA_DATA, val);
+}
+
+static void fb_init(void) {
+  unsigned int bar0 = pci_find_vga_bar0();
+  if (!bar0) return;
+  bga_write(4, 0x00);  /* disable while configuring */
+  bga_write(1, 800);   /* xres */
+  bga_write(2, 600);   /* yres */
+  bga_write(3, 32);    /* bpp */
+  bga_write(4, 0x41);  /* enable + linear framebuffer */
+  fb       = (unsigned char *)bar0;
+  fb_pitch = 800 * 4;
+  fb_width = 800;
+  fb_height = 600;
+  fb_bpp   = 32;
+}
+
+static void fb_putpixel(unsigned int x, unsigned int y, unsigned int rgb) {
+  unsigned int *p = (unsigned int *)(fb + y * fb_pitch + x * (fb_bpp >> 3));
+  *p = rgb;
+}
+
+static void fb_draw(void) {
+  if (!fb) {
+    serial_print("No framebuffer available.\r\n");
+    return;
+  }
+  for (unsigned int y = 0; y < fb_height; y++) {
+    for (unsigned int x = 0; x < fb_width; x++) {
+      unsigned char r = (unsigned char)(x * 255 / fb_width);
+      unsigned char g = (unsigned char)(y * 255 / fb_height);
+      unsigned char b = (unsigned char)((x + y) * 255 / (fb_width + fb_height));
+      fb_putpixel(x, y, ((unsigned int)r << 16) | ((unsigned int)g << 8) | b);
+    }
+  }
+}
+
+void kernel_main(multiboot_info_t *mbi) {
   outb(0x70, inb(0x70) | 0x80); // disable NMI via CMOS
   outb(0x61, inb(0x61) | 0x0C); // disable IOCHK# and SERR# NMI sources
   serial_init();
+  fb_init();
   fs_load();
   serial_print("Type 'help' for a list of commands.\r\n");
 
@@ -284,13 +361,13 @@ void kernel_main(void) {
                    "  help               show this message\r\n"
                    "  echo <msg>         print a message\r\n"
                    "  clear              clear the screen\r\n"
-                   "  draw               draw on the VGA display\r\n"
+                   "  draw               draw to the framebuffer\r\n"
                    "  ls                 list files\r\n"
                    "  cat <file>         print file contents\r\n"
                    "  write <file> <msg> write content to a file\r\n"
                    "  rm <file>          delete a file\r\n");
     } else if (streq(buf, "draw")) {
-      vga_draw();
+      fb_draw();
       serial_print("Drawn.\r\n");
     } else if (streq(buf, "clear")) {
       serial_print("\033[2J\033[H");
