@@ -284,10 +284,14 @@ void kernel_main(void) {
                    "  help               show this message\r\n"
                    "  echo <msg>         print a message\r\n"
                    "  clear              clear the screen\r\n"
+                   "  draw               draw on the VGA display\r\n"
                    "  ls                 list files\r\n"
                    "  cat <file>         print file contents\r\n"
                    "  write <file> <msg> write content to a file\r\n"
                    "  rm <file>          delete a file\r\n");
+    } else if (streq(buf, "draw")) {
+      vga_draw();
+      serial_print("Drawn.\r\n");
     } else if (streq(buf, "clear")) {
       serial_print("\033[2J\033[H");
     } else if (startswith(buf, "echo")) {
