@@ -407,7 +407,7 @@ static void con_draw_char(unsigned int col, unsigned int row, char c) {
   for (int y = 0; y < CHAR_H; y++) {
     unsigned char bits = glyph[y];
     for (int x = 0; x < CHAR_W; x++) {
-      unsigned int color = (bits & (0x80 >> x)) ? 0xAAAAAA : 0x000000;
+      unsigned int color = (bits & (1 << x)) ? 0xAAAAAA : 0x000000;
       fb_putpixel(px + x, py + y, color);
     }
   }
