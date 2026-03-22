@@ -28,7 +28,6 @@ static inline unsigned int inl(unsigned short port) {
   return ret;
 }
 
-
 static int streq(const char *a, const char *b) {
   while (*a && *a == *b) {
     a++;
@@ -221,7 +220,6 @@ static int ata_write_sector(unsigned int lba, unsigned short *buf) {
   ata_wait();
   return 0;
 }
-
 
 #define FS_MAX_FILES 16
 #define FS_MAX_NAME 32
@@ -475,6 +473,7 @@ static void con_clear(void) {
 
 static int kbd_shift = 0;
 static int kbd_caps = 0;
+static int kbd_ctrl = 0;
 
 static const char kbd_map[128] = {
     /* 00 */ 0,
@@ -746,6 +745,8 @@ static char kbd_getchar(void) {
       unsigned char key = sc & 0x7F;
       if (!extended && (key == 0x2A || key == 0x36))
         kbd_shift = 0;
+      if (!extended && key == 0x1D)
+        kbd_ctrl = 0;
       extended = 0;
       continue;
     }
@@ -759,10 +760,17 @@ static char kbd_getchar(void) {
       kbd_shift = 1;
       continue;
     }
+    if (sc == 0x1D) {
+      kbd_ctrl = 1;
+      continue;
+    }
     if (sc == 0x3A) {
       kbd_caps = !kbd_caps;
       continue;
     }
+
+    if (kbd_ctrl && sc == 0x26)
+      return '\f'; /* Ctrl+L */
 
     char c = kbd_shift ? kbd_map_shift[sc] : kbd_map[sc];
 
@@ -784,6 +792,13 @@ static void con_read_line(char *buf, int max) {
     if (c == '\r' || c == '\n') {
       con_putchar('\n');
       break;
+    }
+    if (c == '\f') { /* Ctrl+L: clear and redraw current line */
+      con_clear();
+      con_print("> ");
+      buf[i] = '\0';
+      con_print(buf);
+      continue;
     }
     if (c == '\b') {
       if (i > 0) {
