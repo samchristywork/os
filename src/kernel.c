@@ -813,6 +813,89 @@ static void con_read_line(char *buf, int max) {
   buf[i] = '\0';
 }
 
+#define NUM_STARS 200
+
+static unsigned int rng_state = 0xDEADBEEF;
+
+static unsigned int rng_next(void) {
+  rng_state = rng_state * 1664525 + 1013904223;
+  return rng_state;
+}
+
+static void fb_draw2(void) {
+  if (!fb)
+    return;
+
+#define FOCAL 200
+#define ZMAX 64
+
+  static short star_x[NUM_STARS];
+  static short star_y[NUM_STARS];
+  static unsigned char star_z[NUM_STARS];
+
+  unsigned int cx = fb_width / 2;
+  unsigned int cy = fb_height / 2;
+
+  /* Initialise all stars near the centre at varying depths */
+  for (int i = 0; i < NUM_STARS; i++) {
+    star_x[i] = (short)((rng_next() % 101) - 50); /* -50 .. 50 */
+    star_y[i] = (short)((rng_next() % 75) - 37);  /* -37 .. 37 */
+    star_z[i] = (unsigned char)((rng_next() % ZMAX) + 1);
+  }
+
+  /* Clear screen */
+  for (unsigned int i = 0; i < fb_pitch * fb_height; i++)
+    fb[i] = 0;
+
+  /* Drain stale keyboard events: spin long enough for key-up bytes to arrive */
+  for (volatile int i = 0; i < 2000000; i++)
+    if (inb(KBD_STATUS) & 0x01)
+      inb(KBD_DATA);
+
+  while (!(inb(KBD_STATUS) & 0x01)) {
+    for (int i = 0; i < NUM_STARS; i++) {
+      /* Erase previous pixel (guard: skip on the frame after a reset) */
+      if (star_z[i] < ZMAX) {
+        int ox = (int)star_x[i] * FOCAL / (int)star_z[i] + (int)cx;
+        int oy = (int)star_y[i] * FOCAL / (int)star_z[i] + (int)cy;
+        if (ox >= 0 && ox < (int)fb_width && oy >= 0 && oy < (int)fb_height)
+          fb_putpixel((unsigned int)ox, (unsigned int)oy, 0);
+      }
+
+      /* Advance toward viewer */
+      star_z[i]--;
+
+      /* Project; reset if z exhausted or star flew off-screen */
+      int nx, ny, reset = (star_z[i] == 0);
+      if (!reset) {
+        nx = (int)star_x[i] * FOCAL / (int)star_z[i] + (int)cx;
+        ny = (int)star_y[i] * FOCAL / (int)star_z[i] + (int)cy;
+        reset =
+            (nx < 0 || nx >= (int)fb_width || ny < 0 || ny >= (int)fb_height);
+      }
+
+      if (reset) {
+        star_x[i] = (short)((rng_next() % 101) - 50);
+        star_y[i] = (short)((rng_next() % 75) - 37);
+        star_z[i] = ZMAX; /* invisible sentinel; erased next frame */
+      } else {
+        /* Brightness grows as star approaches: 0 when far, 252 when near */
+        unsigned char b = (unsigned char)((ZMAX - (int)star_z[i]) * 4);
+        fb_putpixel((unsigned int)nx, (unsigned int)ny,
+                    ((unsigned int)b << 16) | ((unsigned int)b << 8) | b);
+      }
+    }
+
+    /* ~30 fps pacing */
+    for (volatile int d = 0; d < 2000000; d++)
+      ;
+  }
+
+  /* Consume the keypress so it doesn't reach the REPL */
+  inb(KBD_DATA);
+  con_clear();
+}
+
 void kernel_main(multiboot_info_t *mbi) {
   (void)mbi;
   outb(0x70, inb(0x70) | 0x80);
@@ -835,10 +918,13 @@ void kernel_main(multiboot_info_t *mbi) {
                 "  echo <msg>         print a message\n"
                 "  clear              clear the screen\n"
                 "  draw               draw to the framebuffer\n"
+                "  draw2              starfield animation (any key to stop)\n"
                 "  ls                 list files\n"
                 "  cat <file>         print file contents\n"
                 "  write <file> <msg> write content to a file\n"
                 "  rm <file>          delete a file\n");
+    } else if (streq(buf, "draw2")) {
+      fb_draw2();
     } else if (streq(buf, "draw")) {
       fb_draw();
     } else if (streq(buf, "clear")) {
